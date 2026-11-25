@@ -44,7 +44,7 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         key = new org.bukkit.NamespacedKey(this, "orbital_cannon");
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("orbital").setExecutor(this);
-        getLogger().info("OrbitalStrike da bat. Owner: " + OWNER_NAME);
+        getLogger().info("OrbitalStrike v1.1 da bat (Fishing Rod thuong). Owner: " + OWNER_NAME);
     }
 
     private boolean isOwner(CommandSender s) {
