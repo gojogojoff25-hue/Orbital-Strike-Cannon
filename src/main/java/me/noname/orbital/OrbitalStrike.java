@@ -50,12 +50,13 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * OrbitalStrike v3.2
+ * OrbitalStrike v3.3
  * - Tự tạo folder plugins/OrbitalStrike/ (config.yml + messages.yml)
  * - Cần câu thường: câu cá bình thường
  * - Orbital: kèn Call + Resistance + TNT rơi thẳng, nổ tại chỗ, không nảy, không sét
@@ -91,7 +92,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             cmd.setTabCompleter(this);
         }
 
-        getLogger().info("OrbitalStrike v3.2 da bat. Owner: " + ownerName());
+        getLogger().info("OrbitalStrike v3.3 da bat. Owner: " + ownerName());
         getLogger().info("Config folder: " + getDataFolder().getAbsolutePath());
     }
 
@@ -451,6 +452,87 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }.runTaskTimer(this, 0L, 2L);
     }
 
+    /**
+     * Tạo số điểm cho từng vòng tròn.
+     * Mỗi vòng được phân bổ đủ 360 độ; không bao giờ dừng giữa một vòng vì chạm giới hạn TNT.
+     * Với cấu hình mặc định (0, 6, 12, 18, 24, 30, 36), cần khoảng 400 TNT.
+     * Nếu tổng số điểm vượt hard-cap 512, mật độ được giảm đồng đều giữa các vòng.
+     */
+    private Map<Integer, Integer> buildRingPlan(List<Integer> configuredRings) {
+        Set<Integer> unique = new HashSet<>();
+        unique.add(0);
+        if (configuredRings != null) {
+            for (Integer radius : configuredRings) {
+                if (radius != null && radius >= 0) unique.add(radius);
+            }
+        }
+
+        List<Integer> radii = new ArrayList<>(unique);
+        Collections.sort(radii);
+
+        // Desired density: approximately one TNT every 2 blocks along the circumference.
+        Map<Integer, Integer> desired = new LinkedHashMap<>();
+        int desiredTotal = 0;
+        for (int radius : radii) {
+            int count = radius == 0
+                    ? 1
+                    : Math.max(8, (int) Math.ceil((2.0 * Math.PI * radius) / 2.0));
+            desired.put(radius, count);
+            desiredTotal += count;
+        }
+
+        final int hardCap = 512;
+        if (desiredTotal <= hardCap) return desired;
+
+        // Too many configured rings: allocate the hard cap proportionally, while keeping
+        // at least 8 evenly spaced points on every outer ring so no ring is left half-built.
+        int centerCount = desired.containsKey(0) ? 1 : 0;
+        List<Integer> outerRadii = new ArrayList<>();
+        for (int radius : radii) if (radius > 0) outerRadii.add(radius);
+
+        while (centerCount + outerRadii.size() * 8 > hardCap && !outerRadii.isEmpty()) {
+            outerRadii.remove(outerRadii.size() - 1);
+        }
+
+        LinkedHashMap<Integer, Integer> result = new LinkedHashMap<>();
+        if (centerCount == 1) result.put(0, 1);
+        if (outerRadii.isEmpty()) return result;
+
+        int minimum = centerCount + outerRadii.size() * 8;
+        int remaining = hardCap - minimum;
+        double totalWeight = 0.0;
+        for (int radius : outerRadii) totalWeight += Math.max(0, desired.get(radius) - 8);
+
+        Map<Integer, Double> fractions = new HashMap<>();
+        int allocated = minimum;
+        for (int radius : outerRadii) {
+            double weight = Math.max(0, desired.get(radius) - 8);
+            double exactExtra = totalWeight <= 0.0 ? 0.0 : remaining * weight / totalWeight;
+            int extra = (int) Math.floor(exactExtra);
+            result.put(radius, 8 + extra);
+            fractions.put(radius, exactExtra - extra);
+            allocated += extra;
+        }
+
+        int leftovers = hardCap - allocated;
+        outerRadii.sort((a, b) -> Double.compare(fractions.get(b), fractions.get(a)));
+        for (int i = 0; i < leftovers && i < outerRadii.size(); i++) {
+            int radius = outerRadii.get(i);
+            result.put(radius, result.get(radius) + 1);
+        }
+
+        // Keep the resulting map in ascending radius order for deterministic spawning.
+        LinkedHashMap<Integer, Integer> ordered = new LinkedHashMap<>();
+        if (centerCount == 1) ordered.put(0, 1);
+        for (int radius : radii) {
+            if (radius > 0 && result.containsKey(radius)) ordered.put(radius, result.get(radius));
+        }
+        if (desiredTotal > hardCap) {
+            getLogger().warning("OrbitalStrike: Tong so diem TNT vuot 512; da giam mat do dong deu de giu tron cac vong.");
+        }
+        return ordered;
+    }
+
     private void launch(Player owner, Location target, double drop, double speed) {
         FileConfiguration config = getConfig();
         World world = target.getWorld();
@@ -460,36 +542,46 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }
 
         final float power = (float) Math.max(0.0, config.getDouble("tnt-power", 4.0));
-        // Hard ceiling avoids accidentally spawning an excessive number of entities.
-        final int maxTnt = Math.min(512, Math.max(1, config.getInt("max-tnt", 256)));
-        final int delayAfterLanding = Math.min(100, Math.max(60,
-                config.getInt("detonation-delay-ticks", 80))); // 3-5 seconds (default 4s)
+        // Countdown is measured from each TNT's own landing tick. Default = exactly 3 seconds.
+        final double delaySeconds = Math.max(3.0,
+                Math.min(5.0, config.getDouble("detonation-delay-seconds", 3.0)));
+        final int delayTicks = (int) Math.round(delaySeconds * 20.0);
+        // Process a large salvo over a few ticks to avoid one extreme server tick.
+        final int explosionsPerTick = Math.max(1,
+                Math.min(128, config.getInt("explosions-per-tick", 64)));
         final boolean fx = config.getBoolean("effects", true);
 
-        List<Integer> rings = config.getIntegerList("rings");
-        if (rings == null || rings.isEmpty()) {
-            rings = Arrays.asList(0, 6, 12, 18, 24, 30, 36);
+        List<Integer> configuredRings = config.getIntegerList("rings");
+        if (configuredRings == null || configuredRings.isEmpty()) {
+            configuredRings = Arrays.asList(0, 6, 12, 18, 24, 30, 36);
         }
-        // Normalize ring list: non-negative, unique, ascending, and include center.
-        Set<Integer> ringSet = new HashSet<>();
-        ringSet.add(0);
-        for (Integer r : rings) if (r != null && r >= 0) ringSet.add(r);
-        List<Integer> cleanRings = new ArrayList<>(ringSet);
-        Collections.sort(cleanRings);
+        Map<Integer, Integer> ringPlan = buildRingPlan(configuredRings);
+        int plannedTnt = 0;
+        for (int amount : ringPlan.values()) plannedTnt += amount;
+        int configuredLimit = config.getInt("max-tnt", 512);
+        if (configuredLimit < plannedTnt) {
+            getLogger().warning("max-tnt=" + configuredLimit + " khong du cho cac vong tron day du; bo qua gioi han nay cho dot danh (" + plannedTnt + " TNT, hard-cap 512).");
+        }
+        getLogger().info("OrbitalStrike: dang tao " + plannedTnt + " TNT tren " + ringPlan.size() + " vong/toa do.");
 
         if (fx) world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 6.0f, 0.5f);
 
         final List<TNTPrimed> bombs = new ArrayList<>();
-        // Evenly distribute TNT around each circumference; spacing is approximately 2 blocks.
-        // The number of points on each ring is based on circumference, not radius*multiplier,
-        // preventing the visibly incomplete rings caused by uneven angular placement.
-        outer:
-        for (int radius : cleanRings) {
-            int count = radius == 0 ? 1 : Math.max(8, (int) Math.ceil(2.0 * Math.PI * radius / 2.0));
+        int ringIndex = 0;
+        for (Map.Entry<Integer, Integer> ring : ringPlan.entrySet()) {
+            int radius = ring.getKey();
+            int count = ring.getValue();
+
             for (int k = 0; k < count; k++) {
-                if (bombs.size() >= maxTnt) break outer;
-                double angle = (2.0 * Math.PI * k) / count;
-                Location spawnLoc = target.clone().add(Math.cos(angle) * radius, drop, Math.sin(angle) * radius);
+                // Half-step offset on alternate rings avoids aligning all points into spokes.
+                double offset = (ringIndex % 2 == 0) ? 0.0 : 0.5;
+                double angle = (2.0 * Math.PI * (k + offset)) / count;
+                Location spawnLoc = target.clone().add(
+                        Math.cos(angle) * radius,
+                        drop,
+                        Math.sin(angle) * radius
+                );
+
                 TNTPrimed tnt = world.spawn(spawnLoc, TNTPrimed.class, entity -> {
                     entity.setFuseTicks(Integer.MAX_VALUE);
                     entity.setYield(power);
@@ -503,66 +595,93 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                 bombs.add(tnt);
                 activeBombs.add(tnt);
             }
+            ringIndex++;
+        }
+
+        if (bombs.isEmpty()) {
+            busy.remove(owner.getUniqueId());
+            return;
         }
 
         final int maxFallWaitTicks = Math.max(400,
                 (int) Math.ceil(Math.sqrt((2.0 * Math.max(1.0, drop)) / 0.04) * 4.0) + 200);
-        final Set<TNTPrimed> landed = new HashSet<>();
+        final Map<TNTPrimed, Integer> detonateAtTick = new HashMap<>();
+        final Set<TNTPrimed> completed = new HashSet<>();
 
         new BukkitRunnable() {
             int tick = 0;
-            int landedDelay = -1;
 
             @Override
             public void run() {
                 tick++;
-                for (TNTPrimed bomb : bombs) {
-                    if (!bomb.isValid()) {
-                        landed.add(bomb);
-                        continue;
-                    }
-                    if (landed.contains(bomb)) {
-                        bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
-                        bomb.setGravity(false);
-                    } else if (bomb.isOnGround()) {
-                        bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
-                        bomb.setGravity(false);
-                        landed.add(bomb);
-                    }
-                }
+                int explosionsThisTick = 0;
 
-                if (landed.size() < bombs.size()) {
-                    if (tick < maxFallWaitTicks) return;
-                    // Remove entities that never reached ground; don't detonate mid-air.
+                try {
                     for (TNTPrimed bomb : bombs) {
-                        if (bomb.isValid() && !landed.contains(bomb)) {
-                            bomb.remove();
+                        if (completed.contains(bomb)) continue;
+
+                        if (!bomb.isValid()) {
+                            completed.add(bomb);
                             activeBombs.remove(bomb);
+                            continue;
+                        }
+
+                        Integer detonationTick = detonateAtTick.get(bomb);
+                        if (detonationTick == null) {
+                            if (bomb.isOnGround()) {
+                                // Freeze at the actual contact position; no upward bounce or drift.
+                                bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
+                                bomb.setGravity(false);
+                                detonateAtTick.put(bomb, tick + delayTicks);
+                            }
+                            continue;
+                        }
+
+                        // Keep landed TNT stationary during its countdown.
+                        bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
+                        bomb.setGravity(false);
+
+                        if (tick >= detonationTick && explosionsThisTick < explosionsPerTick) {
+                            Location boomLoc = bomb.getLocation().clone();
+                            bomb.remove();
+                            completed.add(bomb);
+                            activeBombs.remove(bomb);
+                            world.createExplosion(boomLoc, power, false, true, owner);
+                            explosionsThisTick++;
                         }
                     }
-                }
 
-                // Start the precision delay only once every surviving bomb has landed.
-                if (landedDelay < 0) landedDelay = 0;
-                landedDelay++;
-                if (landedDelay < delayAfterLanding) return;
+                    // Do not let an entity stuck in an unloaded/invalid location block the strike forever.
+                    if (tick >= maxFallWaitTicks) {
+                        for (TNTPrimed bomb : bombs) {
+                            if (completed.contains(bomb)) continue;
+                            if (!detonateAtTick.containsKey(bomb)) {
+                                if (bomb.isValid()) bomb.remove();
+                                completed.add(bomb);
+                                activeBombs.remove(bomb);
+                            }
+                        }
+                    }
 
-                // Detonate at each bomb's actual settled position, then clean up.
-                for (TNTPrimed bomb : bombs) {
-                    if (!bomb.isValid() || !landed.contains(bomb)) continue;
-                    Location boomLoc = bomb.getLocation().clone();
-                    bomb.remove();
-                    activeBombs.remove(bomb);
-                    world.createExplosion(boomLoc, power, false, true, owner);
+                    if (completed.size() >= bombs.size()) {
+                        activeBombs.removeAll(bombs);
+                        busy.remove(owner.getUniqueId());
+                        if (fx) {
+                            world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 12.0f, 0.4f);
+                            world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 9.0f, 0.55f);
+                        }
+                        cancel();
+                    }
+                } catch (RuntimeException error) {
+                    for (TNTPrimed bomb : bombs) {
+                        if (bomb.isValid()) bomb.remove();
+                    }
+                    activeBombs.removeAll(bombs);
+                    busy.remove(owner.getUniqueId());
+                    cancel();
+                    getLogger().severe("OrbitalStrike failed while processing TNT: " + error.getMessage());
+                    error.printStackTrace();
                 }
-
-                activeBombs.removeAll(bombs);
-                busy.remove(owner.getUniqueId());
-                if (fx) {
-                    world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 12.0f, 0.4f);
-                    world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 9.0f, 0.55f);
-                }
-                cancel();
             }
         }.runTaskTimer(this, 1L, 1L);
     }
