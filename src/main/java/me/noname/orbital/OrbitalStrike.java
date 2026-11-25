@@ -392,7 +392,9 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
         final int chargeTicks = Math.max(2, (int) (config.getDouble("charge-seconds", 3.0) * 20));
         final boolean fx = config.getBoolean("effects", true);
-        final double speed = Math.max(0.8, config.getDouble("fall-speed", 3.0));
+        // TNT sẽ rơi bằng trọng lực thật; chỉ dùng fall-speed làm vận tốc ban đầu
+        // và giới hạn để tránh TNT lao quá nhanh xuyên qua địa hình.
+        final double speed = Math.min(1.0, Math.max(0.1, config.getDouble("fall-speed", 3.0)));
 
         double drop = Math.min(config.getDouble("height", 150.0), world.getMaxHeight() - target.getY() - 2);
         if (world.getEnvironment() == World.Environment.NETHER) {
@@ -400,10 +402,10 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }
         if (drop < 10) drop = 10;
         final double dropFinal = drop;
-        final int fallTicks = (int) Math.ceil(dropFinal / speed);
+        final int estimatedFallTicks = (int) Math.ceil(Math.sqrt((2.0 * dropFinal) / 0.04));
 
         if (config.getBoolean("owner-immune", true)) {
-            long protectMs = (chargeTicks + fallTicks + 80L) * 50L;
+            long protectMs = (chargeTicks + estimatedFallTicks * 3L + 100L) * 50L;
             protectUntil.put(owner.getUniqueId(), System.currentTimeMillis() + protectMs);
         }
         busy.add(owner.getUniqueId());
@@ -416,7 +418,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                 if (tick >= chargeTicks) {
                     cancel();
                     try {
-                        launch(owner, target, dropFinal, speed, fallTicks);
+                        launch(owner, target, dropFinal, speed);
                     } catch (Exception ex) {
                         busy.remove(owner.getUniqueId());
                         getLogger().warning("Loi khi thuc hien don danh: " + ex.getMessage());
@@ -449,7 +451,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }.runTaskTimer(this, 0L, 2L);
     }
 
-    private void launch(Player owner, Location target, double drop, double speed, int fallTicks) {
+    private void launch(Player owner, Location target, double drop, double speed) {
         FileConfiguration config = getConfig();
         World world = target.getWorld();
         if (world == null) {
@@ -472,7 +474,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 6.0f, 0.5f);
         }
 
-        final Vector down = new Vector(0, -speed, 0);
         final List<TNTPrimed> bombs = new ArrayList<>();
 
         outer:
@@ -492,8 +493,8 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                     entity.setFuseTicks(99999);
                     entity.setYield(power);
                     entity.setSource(owner);
-                    entity.setGravity(false);
-                    entity.setVelocity(down.clone());
+                    entity.setGravity(true); // Cho TNT chịu trọng lực Minecraft.
+                    entity.setVelocity(new Vector(0.0, -speed, 0.0)); // Chỉ đẩy xuống một lần khi sinh ra.
                     entity.setSilent(true);
                     entity.setInvulnerable(true);
                     entity.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
@@ -504,6 +505,12 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             }
         }
 
+        // Thời gian dự phòng. Nếu một TNT không thể tiếp đất (ví dụ rơi vào khoảng không),
+        // xóa nó thay vì cho nổ giữa không trung hoặc giữ busy vĩnh viễn.
+        final int maxFallWaitTicks = Math.max(200,
+                (int) Math.ceil(Math.sqrt((2.0 * Math.max(1.0, drop)) / 0.04) * 3.0) + 100);
+        final Set<TNTPrimed> landed = new HashSet<>();
+
         new BukkitRunnable() {
             int tick = 0;
 
@@ -511,28 +518,49 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             public void run() {
                 tick++;
 
+                // TNT chạm đất sẽ bị khóa vận tốc và tắt trọng lực, không thể nảy lên.
                 for (TNTPrimed bomb : bombs) {
-                    if (bomb.isValid()) {
+                    if (!bomb.isValid()) {
+                        landed.add(bomb);
+                        continue;
+                    }
+
+                    if (landed.contains(bomb)) {
+                        bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
                         bomb.setGravity(false);
-                        bomb.setVelocity(down.clone());
+                        continue;
+                    }
+
+                    if (bomb.isOnGround()) {
+                        bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
+                        bomb.setGravity(false);
+                        landed.add(bomb);
                     }
                 }
 
-                if (tick < fallTicks) return;
+                if (landed.size() < bombs.size()) {
+                    if (tick < maxFallWaitTicks) return;
 
-                // Xóa entity rồi createExplosion → tuyệt đối không nảy
+                    // Không cho các TNT chưa tiếp đất phát nổ trên trời.
+                    for (TNTPrimed bomb : bombs) {
+                        if (bomb.isValid() && !landed.contains(bomb)) {
+                            bomb.remove();
+                            activeBombs.remove(bomb);
+                        }
+                    }
+                    getLogger().warning("Da xoa TNT khong the tiep dat sau "
+                            + maxFallWaitTicks + " ticks de tranh no tren khong.");
+                }
+
                 int index = 0;
                 for (TNTPrimed bomb : bombs) {
-                    if (!bomb.isValid()) {
+                    if (!bomb.isValid() || !landed.contains(bomb)) {
                         index++;
                         continue;
                     }
 
+                    // Nổ đúng tại vị trí TNT đã nằm xuống đất; không tự nâng tọa độ lên trên.
                     Location boomLoc = bomb.getLocation().clone();
-                    if (boomLoc.getY() < target.getY() + 1.5) {
-                        boomLoc.setY(target.getY() + 1.2);
-                    }
-
                     bomb.remove();
                     activeBombs.remove(bomb);
 
