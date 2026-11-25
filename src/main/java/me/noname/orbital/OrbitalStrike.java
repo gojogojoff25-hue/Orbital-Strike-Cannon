@@ -49,16 +49,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * OrbitalStrike v3.0 – VIP Pro Max
- *
- * - Cần câu thường (không có thẻ ẩn): câu cá 100% bình thường, không bị ảnh hưởng.
- * - Cần câu Orbital (có PersistentData): chuột phải → gọi đòn Orbital Strike.
- *   + Âm thanh kèn gọi (Goat Horn – Call)
- *   + Hiệu ứng Resistance cho owner
- *   + TNT rơi đồng bộ, nổ cùng tick (có thể dàn trải nếu cần)
- *
- * Tất cả thông số chỉnh trong plugins/OrbitalStrike/config.yml
- * /orbital reload để áp dụng ngay.
+ * OrbitalStrike v3.1
+ * - Cần câu thường: câu cá bình thường 100%
+ * - Cần câu Orbital: chuột phải → kèn gọi Call + Resistance + TNT rơi thẳng xuống nổ (không nảy, không sét)
  */
 public final class OrbitalStrike extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
@@ -70,9 +63,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
     private final Set<UUID> busy = new HashSet<>();
     private final Set<TNTPrimed> activeBombs = new HashSet<>();
 
-    // =====================================================================
-    //  Lifecycle
-    // =====================================================================
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -84,27 +74,20 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             cmd.setExecutor(this);
             cmd.setTabCompleter(this);
         }
-
-        getLogger().info("OrbitalStrike v3.0 VIP Pro Max da bat. Owner: " + ownerName());
+        getLogger().info("OrbitalStrike v3.1 da bat. Owner: " + ownerName());
     }
 
     @Override
     public void onDisable() {
         for (TNTPrimed bomb : activeBombs) {
-            if (bomb != null && bomb.isValid()) {
-                bomb.remove();
-            }
+            if (bomb != null && bomb.isValid()) bomb.remove();
         }
         activeBombs.clear();
         busy.clear();
         protectUntil.clear();
         cooldowns.clear();
-        getLogger().info("OrbitalStrike da tat sach se.");
     }
 
-    // =====================================================================
-    //  Owner check
-    // =====================================================================
     private String ownerName() {
         return getConfig().getString("owner", "NoName334301");
     }
@@ -112,7 +95,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
     private boolean isOwnerPlayer(Player player) {
         if (player == null) return false;
         if (!player.getName().equalsIgnoreCase(ownerName())) return false;
-
         String uuid = getConfig().getString("owner-uuid", "");
         return uuid == null || uuid.isBlank() || uuid.equalsIgnoreCase(player.getUniqueId().toString());
     }
@@ -122,9 +104,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         return sender instanceof Player player && isOwnerPlayer(player);
     }
 
-    // =====================================================================
-    //  Item: Fishing Rod thường + thẻ ẩn PersistentData
-    // =====================================================================
     private ItemStack createCannon() {
         ItemStack item = new ItemStack(Material.FISHING_ROD);
         ItemMeta meta = item.getItemMeta();
@@ -135,17 +114,13 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             int left = Math.max(1, Math.min(max, getConfig().getInt("rod-durability-left", 1)));
             damageable.setDamage(max - left);
         }
-
-        // Thẻ ẩn – cần câu thường KHÔNG có thẻ này nên câu cá bình thường
         meta.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
         item.setItemMeta(meta);
         return item;
     }
 
     private boolean isCannon(ItemStack item) {
-        if (item == null || item.getType() != Material.FISHING_ROD || !item.hasItemMeta()) {
-            return false;
-        }
+        if (item == null || item.getType() != Material.FISHING_ROD || !item.hasItemMeta()) return false;
         ItemMeta meta = item.getItemMeta();
         return meta != null && meta.getPersistentDataContainer().has(key, PersistentDataType.BYTE);
     }
@@ -183,18 +158,13 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         giveTo(sender, target);
     }
 
-    // =====================================================================
-    //  Bắt /give ... orbital strike cannon
-    // =====================================================================
     private String parseGive(String raw) {
         String msg = raw.trim();
         if (msg.startsWith("/")) msg = msg.substring(1);
         String[] parts = msg.split("\\s+", 3);
         if (parts.length < 3) return null;
-
         String cmd = parts[0].toLowerCase();
         if (!cmd.equals("give") && !cmd.equals("minecraft:give")) return null;
-
         String item = parts[2].toLowerCase()
                 .replace("\"", "")
                 .replace('_', ' ')
@@ -219,22 +189,17 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         handleGive(event.getSender(), target);
     }
 
-    // =====================================================================
-    //  Lệnh /orbital
-    // =====================================================================
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!isOwner(sender)) {
             sender.sendMessage("§cChỉ owner mới dùng được lệnh này!");
             return true;
         }
-
         if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
             reloadConfig();
             sender.sendMessage("§a§lĐã tải lại config thành công!");
             return true;
         }
-
         String self = sender instanceof Player player ? player.getName() : null;
         String name;
         if (args.length > 0 && args[0].equalsIgnoreCase("give")) {
@@ -242,7 +207,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         } else {
             name = args.length > 0 ? args[0] : self;
         }
-
         if (name == null) {
             sender.sendMessage("§eDùng: §f/orbital give <người chơi> §7| §f/orbital reload");
             return true;
@@ -254,7 +218,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!isOwner(sender)) return Collections.emptyList();
-
         List<String> suggestions = new ArrayList<>();
         if (args.length == 1) {
             suggestions.add("give");
@@ -265,29 +228,23 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                 suggestions.add(online.getName());
             }
         }
-
         String prefix = args[args.length - 1].toLowerCase();
         suggestions.removeIf(s -> !s.toLowerCase().startsWith(prefix));
         return suggestions;
     }
 
-    // =====================================================================
-    //  Dùng cannon (chuột phải)
-    //  Cần câu THƯỜNG → không vào đây → câu cá bình thường 100%
-    // =====================================================================
     @EventHandler(priority = EventPriority.HIGH)
     public void onUse(PlayerInteractEvent event) {
         Action action = event.getAction();
         if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
 
         ItemStack item = event.getItem();
-        if (!isCannon(item)) return; // ← cần câu thường bỏ qua hoàn toàn
+        if (!isCannon(item)) return; // cần câu thường → bỏ qua hoàn toàn
 
         EquipmentSlot hand = event.getHand();
         if (hand == null) return;
 
-        // Chỉ cancel khi đúng là Orbital Rod → không thả phao câu
-        event.setCancelled(true);
+        event.setCancelled(true); // không thả phao câu
 
         Player player = event.getPlayer();
         if (!isOwnerPlayer(player)) {
@@ -308,8 +265,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }
 
         Location target;
-        String mode = getConfig().getString("mode", "SELF");
-        if ("LOOK".equalsIgnoreCase(mode)) {
+        if ("LOOK".equalsIgnoreCase(getConfig().getString("mode", "SELF"))) {
             Block block = player.getTargetBlockExact(getConfig().getInt("look-range", 300));
             if (block == null) {
                 player.sendMessage("§cKhông có mục tiêu trong tầm ngắm!");
@@ -322,38 +278,37 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
         cooldowns.put(uuid, now);
         consumeRod(player, item, hand);
-
-        // Âm thanh kèn gọi (Goat Horn – Call) ngay khi quăng
         playCallHorn(player.getLocation());
-
-        // Resistance cho owner
         applyResistance(player);
-
         strike(player, target);
     }
 
     private void playCallHorn(Location loc) {
-        // Goat Horn "Call" sound – âm thanh kèn gọi
+        World world = loc.getWorld();
+        if (world == null) return;
         try {
-            loc.getWorld().playSound(loc, Sound.ITEM_GOAT_HORN_SOUND_0, 4.0f, 1.0f);
-        } catch (Exception ignored) {
-            // fallback nếu version cũ
-            loc.getWorld().playSound(loc, "item.goat_horn.sound.0", 4.0f, 1.0f);
+            world.playSound(loc, Sound.ITEM_GOAT_HORN_SOUND_5, 5.0f, 1.0f); // Call
+        } catch (Exception e) {
+            world.playSound(loc, "item.goat_horn.sound.5", 5.0f, 1.0f);
         }
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                try {
+                    world.playSound(loc, Sound.ITEM_GOAT_HORN_SOUND_5, 4.0f, 1.0f);
+                } catch (Exception ignored) {
+                    world.playSound(loc, "item.goat_horn.sound.5", 4.0f, 1.0f);
+                }
+            }
+        }.runTaskLater(this, 2L);
     }
 
     private void applyResistance(Player player) {
         if (!getConfig().getBoolean("give-resistance", true)) return;
-
-        int duration = getConfig().getInt("resistance-duration-ticks", 200); // 10 giây
-        int amplifier = getConfig().getInt("resistance-amplifier", 4);      // Resistance V
+        int duration = getConfig().getInt("resistance-duration-ticks", 200);
+        int amplifier = getConfig().getInt("resistance-amplifier", 4);
         player.addPotionEffect(new PotionEffect(
-                PotionEffectType.RESISTANCE,
-                duration,
-                amplifier,
-                false,
-                true,
-                true
+                PotionEffectType.RESISTANCE, duration, amplifier, false, true, true
         ));
     }
 
@@ -369,11 +324,9 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         int max = Material.FISHING_ROD.getMaxDurability();
         ItemMeta meta = item.getItemMeta();
         int newDamage = max;
-
         if (meta instanceof Damageable current) {
             newDamage = current.getDamage() + 1;
         }
-
         if (newDamage >= max) {
             setHand(player, hand, null);
             player.playSound(player.getLocation(), Sound.ENTITY_ITEM_BREAK, 1.0f, 1.0f);
@@ -385,9 +338,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }
     }
 
-    // =====================================================================
-    //  Giai đoạn 1: Charge + tia sáng
-    // =====================================================================
     private void strike(Player owner, Location target) {
         FileConfiguration config = getConfig();
         World world = target.getWorld();
@@ -395,7 +345,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
         final int chargeTicks = Math.max(2, (int) (config.getDouble("charge-seconds", 3.0) * 20));
         final boolean fx = config.getBoolean("effects", true);
-        final double speed = Math.max(0.5, config.getDouble("fall-speed", 2.5));
+        final double speed = Math.max(0.8, config.getDouble("fall-speed", 3.0));
 
         double drop = Math.min(config.getDouble("height", 150.0), world.getMaxHeight() - target.getY() - 2);
         if (world.getEnvironment() == World.Environment.NETHER) {
@@ -406,7 +356,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         final int fallTicks = (int) Math.ceil(dropFinal / speed);
 
         if (config.getBoolean("owner-immune", true)) {
-            long protectMs = (chargeTicks + fallTicks + 100L) * 50L;
+            long protectMs = (chargeTicks + fallTicks + 80L) * 50L;
             protectUntil.put(owner.getUniqueId(), System.currentTimeMillis() + protectMs);
         }
         busy.add(owner.getUniqueId());
@@ -427,30 +377,24 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                     }
                     return;
                 }
-
                 if (fx) {
-                    // Tia sáng dọc
-                    for (double y = 0; y < dropFinal + 30; y += 1.5) {
+                    for (double y = 0; y < dropFinal + 20; y += 2.0) {
                         world.spawnParticle(Particle.END_ROD,
                                 target.getX(), target.getY() + y, target.getZ(),
-                                1, 0.12, 0, 0.12, 0);
+                                1, 0.1, 0, 0.1, 0);
                     }
-
-                    // Vòng lửa thu nhỏ
                     double progress = (double) tick / chargeTicks;
-                    double radius = 30 * (1 - progress) + 1.5;
-                    for (int i = 0; i < 360; i += 12) {
+                    double radius = 28 * (1 - progress) + 1.2;
+                    for (int i = 0; i < 360; i += 15) {
                         double rad = Math.toRadians(i);
                         world.spawnParticle(Particle.FLAME,
                                 target.getX() + Math.cos(rad) * radius,
-                                target.getY() + 0.25,
+                                target.getY() + 0.3,
                                 target.getZ() + Math.sin(rad) * radius,
                                 1, 0, 0, 0, 0);
                     }
-
-                    // Âm thanh charge
                     if (tick % 10 == 0) {
-                        world.playSound(target, Sound.BLOCK_BEACON_POWER_SELECT, 3.5f, (float) (0.5 + progress * 0.8));
+                        world.playSound(target, Sound.BLOCK_BEACON_POWER_SELECT, 3.0f, (float) (0.5 + progress * 0.7));
                     }
                 }
                 tick += 2;
@@ -458,9 +402,6 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         }.runTaskTimer(this, 0L, 2L);
     }
 
-    // =====================================================================
-    //  Giai đoạn 2: TNT xuất hiện + rơi đồng bộ + nổ
-    // =====================================================================
     private void launch(Player owner, Location target, double drop, double speed, int fallTicks) {
         FileConfiguration config = getConfig();
         World world = target.getWorld();
@@ -480,10 +421,8 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             rings = Arrays.asList(0, 6, 12, 18, 24, 30, 36);
         }
 
-        // Âm thanh sấm khi TNT xuất hiện
         if (fx) {
-            world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 8.0f, 0.55f);
-            world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 2.0f, 0.3f);
+            world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 6.0f, 0.5f);
         }
 
         final Vector down = new Vector(0, -speed, 0);
@@ -503,11 +442,12 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                 );
 
                 TNTPrimed tnt = world.spawn(spawnLoc, TNTPrimed.class, entity -> {
-                    entity.setFuseTicks(4000); // ngòi dài, chưa nổ khi đang rơi
+                    entity.setFuseTicks(9999);
                     entity.setYield(power);
                     entity.setSource(owner);
                     entity.setGravity(false);
-                    entity.setVelocity(down);
+                    entity.setVelocity(down.clone());
+                    entity.setSilent(true);
                     entity.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
                 });
 
@@ -522,12 +462,22 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             @Override
             public void run() {
                 tick++;
+
+                for (TNTPrimed bomb : bombs) {
+                    if (bomb.isValid()) {
+                        bomb.setVelocity(down.clone());
+                        bomb.setGravity(false);
+                    }
+                }
+
                 if (tick >= fallTicks) {
                     int index = 0;
                     for (TNTPrimed bomb : bombs) {
                         if (bomb.isValid()) {
-                            bomb.setGravity(true);
-                            bomb.setFuseTicks(1 + (spread > 0 ? index % (spread + 1) : 0));
+                            int fuse = (spread > 0) ? (index % (spread + 1)) : 0;
+                            bomb.setFuseTicks(Math.max(0, fuse));
+                            bomb.setVelocity(down.clone());
+                            bomb.setGravity(false);
                         }
                         index++;
                     }
@@ -535,53 +485,34 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                     busy.remove(owner.getUniqueId());
 
                     if (fx) {
-                        world.strikeLightningEffect(target);
-                        world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 12.0f, 0.45f);
-                        world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 6.0f, 0.7f);
+                        world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 10.0f, 0.4f);
+                        world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 8.0f, 0.6f);
                     }
                     cancel();
-                    return;
-                }
-
-                // Giữ vận tốc rơi ổn định
-                for (TNTPrimed bomb : bombs) {
-                    if (bomb.isValid()) {
-                        bomb.setVelocity(down);
-                    }
                 }
             }
         }.runTaskTimer(this, 1L, 1L);
     }
 
-    // =====================================================================
-    //  Không rơi item từ nổ (tránh lag)
-    // =====================================================================
     @EventHandler
     public void onExplode(EntityExplodeEvent event) {
         Entity entity = event.getEntity();
         if (!(entity instanceof TNTPrimed tnt)) return;
         if (!tnt.getPersistentDataContainer().has(key, PersistentDataType.BYTE)) return;
-
         if (!getConfig().getBoolean("drop-items", false)) {
             event.setYield(0f);
         }
     }
 
-    // =====================================================================
-    //  Owner miễn sát thương nổ / rơi / ngạt trong lúc bắn
-    // =====================================================================
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
-
         Long until = protectUntil.get(player.getUniqueId());
         if (until == null) return;
-
         if (System.currentTimeMillis() > until) {
             protectUntil.remove(player.getUniqueId());
             return;
         }
-
         EntityDamageEvent.DamageCause cause = event.getCause();
         if (cause == EntityDamageEvent.DamageCause.ENTITY_EXPLOSION
                 || cause == EntityDamageEvent.DamageCause.BLOCK_EXPLOSION
