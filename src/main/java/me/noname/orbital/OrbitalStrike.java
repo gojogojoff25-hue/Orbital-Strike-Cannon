@@ -459,79 +459,72 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             return;
         }
 
-        final float power = (float) config.getDouble("tnt-power", 12.0);
-        final int perRadius = Math.max(1, config.getInt("tnt-per-radius", 2));
-        final int maxTnt = Math.max(1, config.getInt("max-tnt", 800));
-        final int spread = Math.max(0, config.getInt("detonation-spread-ticks", 0));
+        final float power = (float) Math.max(0.0, config.getDouble("tnt-power", 4.0));
+        // Hard ceiling avoids accidentally spawning an excessive number of entities.
+        final int maxTnt = Math.min(512, Math.max(1, config.getInt("max-tnt", 256)));
+        final int delayAfterLanding = Math.min(100, Math.max(60,
+                config.getInt("detonation-delay-ticks", 80))); // 3-5 seconds (default 4s)
         final boolean fx = config.getBoolean("effects", true);
 
         List<Integer> rings = config.getIntegerList("rings");
-        if (rings.isEmpty()) {
+        if (rings == null || rings.isEmpty()) {
             rings = Arrays.asList(0, 6, 12, 18, 24, 30, 36);
         }
+        // Normalize ring list: non-negative, unique, ascending, and include center.
+        Set<Integer> ringSet = new HashSet<>();
+        ringSet.add(0);
+        for (Integer r : rings) if (r != null && r >= 0) ringSet.add(r);
+        List<Integer> cleanRings = new ArrayList<>(ringSet);
+        Collections.sort(cleanRings);
 
-        if (fx) {
-            world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 6.0f, 0.5f);
-        }
+        if (fx) world.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 6.0f, 0.5f);
 
         final List<TNTPrimed> bombs = new ArrayList<>();
-
+        // Evenly distribute TNT around each circumference; spacing is approximately 2 blocks.
+        // The number of points on each ring is based on circumference, not radius*multiplier,
+        // preventing the visibly incomplete rings caused by uneven angular placement.
         outer:
-        for (int radius : rings) {
-            int count = radius <= 0 ? 1 : radius * perRadius;
+        for (int radius : cleanRings) {
+            int count = radius == 0 ? 1 : Math.max(8, (int) Math.ceil(2.0 * Math.PI * radius / 2.0));
             for (int k = 0; k < count; k++) {
                 if (bombs.size() >= maxTnt) break outer;
-
-                double angle = 2 * Math.PI * k / count;
-                Location spawnLoc = target.clone().add(
-                        Math.cos(angle) * radius,
-                        drop,
-                        Math.sin(angle) * radius
-                );
-
+                double angle = (2.0 * Math.PI * k) / count;
+                Location spawnLoc = target.clone().add(Math.cos(angle) * radius, drop, Math.sin(angle) * radius);
                 TNTPrimed tnt = world.spawn(spawnLoc, TNTPrimed.class, entity -> {
-                    entity.setFuseTicks(99999);
+                    entity.setFuseTicks(Integer.MAX_VALUE);
                     entity.setYield(power);
                     entity.setSource(owner);
-                    entity.setGravity(true); // Cho TNT chịu trọng lực Minecraft.
-                    entity.setVelocity(new Vector(0.0, -speed, 0.0)); // Chỉ đẩy xuống một lần khi sinh ra.
+                    entity.setGravity(true);
+                    entity.setVelocity(new Vector(0.0, -Math.min(1.0, Math.max(0.1, speed)), 0.0));
                     entity.setSilent(true);
                     entity.setInvulnerable(true);
                     entity.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
                 });
-
                 bombs.add(tnt);
                 activeBombs.add(tnt);
             }
         }
 
-        // Thời gian dự phòng. Nếu một TNT không thể tiếp đất (ví dụ rơi vào khoảng không),
-        // xóa nó thay vì cho nổ giữa không trung hoặc giữ busy vĩnh viễn.
-        final int maxFallWaitTicks = Math.max(200,
-                (int) Math.ceil(Math.sqrt((2.0 * Math.max(1.0, drop)) / 0.04) * 3.0) + 100);
+        final int maxFallWaitTicks = Math.max(400,
+                (int) Math.ceil(Math.sqrt((2.0 * Math.max(1.0, drop)) / 0.04) * 4.0) + 200);
         final Set<TNTPrimed> landed = new HashSet<>();
 
         new BukkitRunnable() {
             int tick = 0;
+            int landedDelay = -1;
 
             @Override
             public void run() {
                 tick++;
-
-                // TNT chạm đất sẽ bị khóa vận tốc và tắt trọng lực, không thể nảy lên.
                 for (TNTPrimed bomb : bombs) {
                     if (!bomb.isValid()) {
                         landed.add(bomb);
                         continue;
                     }
-
                     if (landed.contains(bomb)) {
                         bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
                         bomb.setGravity(false);
-                        continue;
-                    }
-
-                    if (bomb.isOnGround()) {
+                    } else if (bomb.isOnGround()) {
                         bomb.setVelocity(new Vector(0.0, 0.0, 0.0));
                         bomb.setGravity(false);
                         landed.add(bomb);
@@ -540,50 +533,31 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
                 if (landed.size() < bombs.size()) {
                     if (tick < maxFallWaitTicks) return;
-
-                    // Không cho các TNT chưa tiếp đất phát nổ trên trời.
+                    // Remove entities that never reached ground; don't detonate mid-air.
                     for (TNTPrimed bomb : bombs) {
                         if (bomb.isValid() && !landed.contains(bomb)) {
                             bomb.remove();
                             activeBombs.remove(bomb);
                         }
                     }
-                    getLogger().warning("Da xoa TNT khong the tiep dat sau "
-                            + maxFallWaitTicks + " ticks de tranh no tren khong.");
                 }
 
-                int index = 0;
-                for (TNTPrimed bomb : bombs) {
-                    if (!bomb.isValid() || !landed.contains(bomb)) {
-                        index++;
-                        continue;
-                    }
+                // Start the precision delay only once every surviving bomb has landed.
+                if (landedDelay < 0) landedDelay = 0;
+                landedDelay++;
+                if (landedDelay < delayAfterLanding) return;
 
-                    // Nổ đúng tại vị trí TNT đã nằm xuống đất; không tự nâng tọa độ lên trên.
+                // Detonate at each bomb's actual settled position, then clean up.
+                for (TNTPrimed bomb : bombs) {
+                    if (!bomb.isValid() || !landed.contains(bomb)) continue;
                     Location boomLoc = bomb.getLocation().clone();
                     bomb.remove();
                     activeBombs.remove(bomb);
-
-                    final int delay = (spread > 0) ? (index % (spread + 1)) : 0;
-                    final float p = power;
-                    final Location loc = boomLoc;
-
-                    if (delay <= 0) {
-                        world.createExplosion(loc, p, false, true, owner);
-                    } else {
-                        new BukkitRunnable() {
-                            @Override
-                            public void run() {
-                                world.createExplosion(loc, p, false, true, owner);
-                            }
-                        }.runTaskLater(OrbitalStrike.this, delay);
-                    }
-                    index++;
+                    world.createExplosion(boomLoc, power, false, true, owner);
                 }
 
                 activeBombs.removeAll(bombs);
                 busy.remove(owner.getUniqueId());
-
                 if (fx) {
                     world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 12.0f, 0.4f);
                     world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 9.0f, 0.55f);
