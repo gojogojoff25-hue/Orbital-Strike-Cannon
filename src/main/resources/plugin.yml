@@ -1,0 +1,10 @@
+name: OrbitalStrike
+version: 1.1
+main: me.noname.orbital.OrbitalStrike
+api-version: "1.21"
+author: NoName334301
+description: Orbital Strike Cannon - chi owner moi dung duoc
+commands:
+  orbital:
+    description: Nhan Orbital Strike Cannon (chi owner)
+    usage: /orbital [ten]
