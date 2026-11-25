@@ -1,0 +1,9 @@
+name: OrbitalStrike
+version: 1.0
+main: me.noname.orbital.OrbitalStrike
+api-version: "1.21"
+author: NoName334301
+commands:
+  orbital:
+    description: Nhan Orbital Strike Cannon
+    usage: /orbital [ten]
