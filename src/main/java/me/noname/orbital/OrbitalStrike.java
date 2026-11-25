@@ -1,7 +1,6 @@
 package me.noname.orbital;
 
 import org.bukkit.*;
-import org.bukkit.block.Block;
 import org.bukkit.command.*;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
@@ -29,7 +28,6 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
     // ====== CHỈ OWNER MỚI DÙNG ĐƯỢC ======
     private static final String OWNER_NAME = "NoName334301";
     // ====== CẤU HÌNH ĐỘ MẠNH (giảm xuống nếu server lag) ======
-    private static final int MAX_RANGE = 300;       // tầm ngắm tối đa (block)
     private static final int HEIGHT = 120;          // độ cao TNT rơi xuống
     private static final float TNT_YIELD = 10f;     // sức nổ mỗi quả TNT
     private static final int[] RINGS = {0, 5, 10, 15, 20, 25}; // bán kính các vòng
@@ -163,18 +161,13 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
             p.sendMessage("§eĐang hồi chiêu: " + ((COOLDOWN_MS - (now - last)) / 1000 + 1) + "s");
             return;
         }
-        Block b = p.getTargetBlockExact(MAX_RANGE);
-        if (b == null) {
-            p.sendMessage("§cKhông có mục tiêu trong tầm ngắm!");
-            return;
-        }
         cooldowns.put(p.getUniqueId(), now);
-        strike(p, b.getLocation().add(0.5, 1, 0.5));
+        // Đánh ngay vị trí người đứng
+        strike(p, p.getLocation().clone());
     }
 
     private void strike(Player owner, Location target) {
         World w = target.getWorld();
-        Bukkit.broadcastMessage("§c§l[ORBITAL STRIKE] §fĐang định vị mục tiêu...");
 
         // Giai đoạn 1: tia sáng đánh dấu 3 giây
         new BukkitRunnable() {
