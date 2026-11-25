@@ -24,14 +24,12 @@ tnt-per-radius: 2
 max-tnt: 800
 tnt-power: 12.0
 
-# 0 = nổ cùng 1 tick
 detonation-spread-ticks: 0
 
 drop-items: false
 owner-immune: true
 effects: true
 
-# Kèn gọi Call + Resistance
 give-resistance: true
 resistance-duration-ticks: 200
 resistance-amplifier: 4
