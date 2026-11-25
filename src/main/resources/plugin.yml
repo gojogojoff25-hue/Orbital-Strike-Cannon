@@ -1,0 +1,11 @@
+name: OrbitalStrike
+version: 3.0
+main: me.noname.orbital.OrbitalStrike
+api-version: "1.21"
+author: NoName334301
+description: Orbital Strike Cannon VIP Pro Max - chi owner moi dung duoc. Can cau thuong cau ca binh thuong.
+commands:
+  orbital:
+    description: Nhan Fishing Rod (Orbital Strike Cannon) - chi owner
+    usage: /orbital [give <ten>|reload]
+    aliases: [osc]
