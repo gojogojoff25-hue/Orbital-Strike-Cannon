@@ -1,9 +1,9 @@
 name: OrbitalStrike
-version: 3.1
+version: 3.2
 main: me.noname.orbital.OrbitalStrike
 api-version: "1.21"
 author: NoName334301
-description: Orbital Strike Cannon - can cau thuong cau ca binh thuong, Orbital goi don + ken goi Call.
+description: Orbital Strike Cannon - tu tao folder plugins/OrbitalStrike de tuy chinh.
 commands:
   orbital:
     description: Nhan Fishing Rod (Orbital Strike Cannon) - chi owner
