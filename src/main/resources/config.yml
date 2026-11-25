@@ -1,0 +1,52 @@
+# ===== OrbitalStrike v3.0 VIP Pro Max =====
+# Sửa xong gõ /orbital reload (hoặc restart server) để áp dụng.
+
+# Chỉ người chơi tên này (và console) mới dùng được cannon.
+owner: NoName334301
+# (Tùy chọn) khóa thêm theo UUID để chống giả mạo tên khi server cracked. Để trống nếu không dùng.
+owner-uuid: "1d8f4138-65f1-3e7c-bde2-370c07825bfe"
+
+# Thời gian hồi chiêu (giây)
+cooldown-seconds: 10
+
+# SELF = đánh ngay chỗ đang đứng | LOOK = đánh chỗ đang nhìn
+mode: SELF
+look-range: 300
+
+# Số lần dùng còn lại của cần câu khi nhận (1 = bắn 1 lần là vỡ, tối đa 64)
+rod-durability-left: 1
+
+# Thời gian tia sáng đánh dấu trước khi TNT rơi (giây)
+charge-seconds: 3
+
+# Độ cao TNT rơi xuống (block) và tốc độ rơi (block/tick)
+height: 150
+fall-speed: 2.5
+
+# Các vòng TNT (bán kính, block). 0 = tâm.
+rings: [0, 6, 12, 18, 24, 30, 36]
+# Số TNT mỗi vòng = bán kính x số này
+tnt-per-radius: 2
+# Giới hạn tổng số TNT (chống lag/crash)
+max-tnt: 800
+# Sức nổ mỗi quả TNT (TNT thường là 4). Tăng cao quá sẽ lag mạnh.
+tnt-power: 12.0
+
+# 0 = TẤT CẢ nổ cùng 1 tick (đồng bộ). Nếu server giật nặng, thử 2-4 để dàn trải.
+detonation-spread-ticks: 0
+
+# Có rơi vật phẩm từ block bị nổ không (false = tránh lag)
+drop-items: false
+
+# Owner miễn sát thương nổ/rơi/ngạt trong lúc đang bắn
+owner-immune: true
+
+# Hiệu ứng hạt, âm thanh, sét
+effects: true
+
+# ===== Mới v3.0 =====
+# Khi quăng Orbital Rod → phát âm thanh kèn gọi (Goat Horn Call)
+# + cho Resistance
+give-resistance: true
+resistance-duration-ticks: 200   # 10 giây (20 tick = 1s)
+resistance-amplifier: 4         # Resistance V (0 = I, 4 = V)
