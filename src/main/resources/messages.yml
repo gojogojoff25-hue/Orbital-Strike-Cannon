@@ -1,0 +1,14 @@
+# ===== Tin nhắn tùy chỉnh =====
+# Dùng & thay § cũng được (plugin tự chuyển)
+
+prefix: "&8[&cOrbital&8] &r"
+
+only-owner: "&cChỉ owner mới dùng được lệnh này!"
+player-not-found: "&cKhông tìm thấy người chơi: &f%player%"
+give-success: "&a&lĐã đưa &eFishing Rod (Orbital Strike Cannon) &acho &f%player%"
+receive-cannon: "&a&lBạn nhận được &eOrbital Strike Cannon&a! Chuột phải để gọi đòn."
+not-owner-weapon: "&cBạn không phải owner, không thể dùng vũ khí này!"
+cooldown: "&eĐang hồi chiêu: &f%seconds%s"
+no-target: "&cKhông có mục tiêu trong tầm ngắm!"
+reload-success: "&a&lĐã tải lại config thành công!"
+usage: "&eDùng: &f/orbital give <người chơi> &7| &f/orbital reload"
