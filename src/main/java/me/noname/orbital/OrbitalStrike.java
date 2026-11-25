@@ -2,7 +2,6 @@ package me.noname.orbital;
 
 import org.bukkit.*;
 import org.bukkit.command.*;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
 import org.bukkit.event.*;
@@ -11,13 +10,14 @@ import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.server.ServerCommandEvent;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.HashMap;
@@ -27,13 +27,15 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
 
     // ====== CHỈ OWNER MỚI DÙNG ĐƯỢC ======
     private static final String OWNER_NAME = "NoName334301";
+    // ====== TÊN CẦN CÂU (chỉ dùng cho tin nhắn; item giữ tên mặc định của Minecraft) ======
+    private static final String ROD_NAME = "Fishing Rod";
     // ====== CẤU HÌNH ĐỘ MẠNH (giảm xuống nếu server lag) ======
-    private static final int HEIGHT = 120;          // độ cao TNT rơi xuống
-    private static final float TNT_YIELD = 10f;     // sức nổ mỗi quả TNT
-    private static final int[] RINGS = {0, 5, 10, 15, 20, 25}; // bán kính các vòng
+    private static final int HEIGHT = 150;          // độ cao TNT rơi xuống
+    private static final float TNT_YIELD = 15f;     // sức nổ mỗi quả TNT
+    private static final int[] RINGS = {0, 5, 10, 15, 20, 25, 30, 35, 40}; // bán kính các vòng
     private static final long COOLDOWN_MS = 10_000; // hồi chiêu 10 giây
 
-    private static final String ITEM_NAME = "Orbital Strike Cannon";
+    private static final String ITEM_NAME = "Orbital Strike Cannon"; // tên dùng trong lệnh /give
     private org.bukkit.NamespacedKey key;
     private final Map<UUID, Long> cooldowns = new HashMap<>();
 
@@ -50,19 +52,10 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         return s instanceof Player p && p.getName().equals(OWNER_NAME);
     }
 
-    // ---------- Tạo item ----------
+    // ---------- Tạo item: cần câu thường y hệt vanilla (không tên riêng, không enchant) ----------
     private ItemStack createCannon() {
         ItemStack item = new ItemStack(Material.FISHING_ROD);
         ItemMeta meta = item.getItemMeta();
-        // Độ bền còn khoảng 1% (còn 1/64)
-        if (meta instanceof org.bukkit.inventory.meta.Damageable dmg) {
-            int max = Material.FISHING_ROD.getMaxDurability();
-            dmg.setDamage(max - Math.max(1, max / 100));
-        }
-        meta.setDisplayName("§c§lOrbital Strike Cannon");
-        meta.setLore(List.of("§7Chuột phải để gọi đòn tấn công từ quỹ đạo", "§8Chỉ dành cho owner"));
-        meta.addEnchant(Enchantment.UNBREAKING, 1, true);
-        meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
         meta.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
         item.setItemMeta(meta);
         return item;
@@ -83,7 +76,7 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
             return;
         }
         target.getInventory().addItem(createCannon());
-        sender.sendMessage("§aĐã đưa Orbital Strike Cannon cho " + target.getName());
+        sender.sendMessage("§aĐã đưa " + ROD_NAME + " cho " + target.getName());
     }
 
     // ---------- Lệnh /give @NoName334301 Orbital Strike Cannon ----------
@@ -129,12 +122,6 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         return true;
     }
 
-    // Không cho cây cần câu bị mất độ bền / bị hỏng
-    @EventHandler
-    public void onDamage(org.bukkit.event.player.PlayerItemDamageEvent e) {
-        if (isCannon(e.getItem())) e.setCancelled(true);
-    }
-
     // Không cho thả phao câu khi cầm cannon
     @EventHandler
     public void onFish(org.bukkit.event.player.PlayerFishEvent e) {
@@ -162,6 +149,19 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
             return;
         }
         cooldowns.put(p.getUniqueId(), now);
+
+        // Mỗi lần bắn mất 1 độ bền, hết độ bền thì cần câu vỡ
+        ItemMeta meta = item.getItemMeta();
+        if (meta instanceof Damageable dmg) {
+            dmg.setDamage(dmg.getDamage() + 1);
+            if (dmg.getDamage() >= Material.FISHING_ROD.getMaxDurability()) {
+                p.getInventory().setItemInMainHand(null);
+                p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 1f, 1f);
+            } else {
+                item.setItemMeta(dmg);
+            }
+        }
+
         // Đánh ngay vị trí người đứng
         strike(p, p.getLocation().clone());
     }
@@ -196,26 +196,54 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         }.runTaskTimer(this, 0L, 2L);
     }
 
-    // Giai đoạn 2: TNT rơi từ trên trời theo từng vòng
+    // Giai đoạn 2: TẤT CẢ TNT cùng xuất hiện, cùng rơi với tốc độ không đổi, và NỔ CÙNG MỘT TICK
+    private static final double FALL_SPEED = 2.5; // block mỗi tick
+
     private void launch(Player owner, Location target) {
         World w = target.getWorld();
         w.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 10f, 0.6f);
 
-        for (int i = 0; i < RINGS.length; i++) {
-            final int radius = RINGS[i];
-            Bukkit.getScheduler().runTaskLater(this, () -> {
-                int count = radius == 0 ? 1 : radius * 3;
-                for (int k = 0; k < count; k++) {
-                    double ang = 2 * Math.PI * k / count;
-                    Location spawn = target.clone().add(Math.cos(ang) * radius, HEIGHT, Math.sin(ang) * radius);
-                    w.spawn(spawn, TNTPrimed.class, tnt -> {
-                        tnt.setFuseTicks(80);
-                        tnt.setYield(TNT_YIELD);
-                        tnt.setSource(owner);
-                        tnt.setVelocity(new org.bukkit.util.Vector(0, -1.5, 0));
-                    });
-                }
-            }, i * 8L);
+        double drop = Math.min(HEIGHT, w.getMaxHeight() - target.getY() - 2);
+        if (drop < 10) drop = 10;
+        final int fallTicks = (int) Math.ceil(drop / FALL_SPEED);
+        final org.bukkit.util.Vector down = new org.bukkit.util.Vector(0, -FALL_SPEED, 0);
+        final List<TNTPrimed> bombs = new ArrayList<>();
+
+        for (int radius : RINGS) {
+            int count = radius == 0 ? 1 : radius * 3;
+            for (int k = 0; k < count; k++) {
+                double ang = 2 * Math.PI * k / count;
+                Location spawn = target.clone().add(Math.cos(ang) * radius, drop, Math.sin(ang) * radius);
+                bombs.add(w.spawn(spawn, TNTPrimed.class, tnt -> {
+                    tnt.setFuseTicks(2000);   // ngòi dài, chưa nổ trong lúc rơi
+                    tnt.setYield(TNT_YIELD);
+                    tnt.setSource(owner);
+                    tnt.setGravity(false);
+                    tnt.setVelocity(down);
+                }));
+            }
         }
+
+        new BukkitRunnable() {
+            int t = 0;
+            @Override
+            public void run() {
+                t++;
+                if (t >= fallTicks) {
+                    // Cùng một tick: đặt ngòi = 1 cho tất cả => nổ đồng loạt
+                    for (TNTPrimed b : bombs) {
+                        if (b.isValid()) {
+                            b.setGravity(true);
+                            b.setFuseTicks(1);
+                        }
+                    }
+                    cancel();
+                    return;
+                }
+                for (TNTPrimed b : bombs) {
+                    if (b.isValid()) b.setVelocity(down);
+                }
+            }
+        }.runTaskTimer(this, 1L, 1L);
     }
 }
