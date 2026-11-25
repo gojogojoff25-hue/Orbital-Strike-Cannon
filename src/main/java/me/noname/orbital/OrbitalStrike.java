@@ -1,6 +1,7 @@
 package me.noname.orbital;
 
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -15,6 +16,7 @@ import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
@@ -38,6 +40,10 @@ import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
+import java.io.File;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -49,15 +55,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * OrbitalStrike v3.1
- * - Cần câu thường: câu cá bình thường 100%
- * - Cần câu Orbital: chuột phải → kèn gọi Call + Resistance + TNT rơi thẳng xuống nổ (không nảy, không sét)
+ * OrbitalStrike v3.2
+ * - Tự tạo folder plugins/OrbitalStrike/ (config.yml + messages.yml)
+ * - Cần câu thường: câu cá bình thường
+ * - Orbital: kèn Call + Resistance + TNT rơi thẳng, nổ tại chỗ, không nảy, không sét
  */
 public final class OrbitalStrike extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private static final String ITEM_NAME = "orbital strike cannon";
 
     private NamespacedKey key;
+    private FileConfiguration messages;
     private final Map<UUID, Long> cooldowns = new HashMap<>();
     private final Map<UUID, Long> protectUntil = new HashMap<>();
     private final Set<UUID> busy = new HashSet<>();
@@ -65,7 +73,15 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
     @Override
     public void onEnable() {
+        // ===== TỰ TẠO THƯ MỤC plugins/OrbitalStrike/ =====
+        if (!getDataFolder().exists()) {
+            getDataFolder().mkdirs();
+            getLogger().info("Da tao thu muc: " + getDataFolder().getAbsolutePath());
+        }
+
         saveDefaultConfig();
+        loadMessages();
+
         key = new NamespacedKey(this, "orbital_cannon");
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -74,7 +90,9 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             cmd.setExecutor(this);
             cmd.setTabCompleter(this);
         }
-        getLogger().info("OrbitalStrike v3.1 da bat. Owner: " + ownerName());
+
+        getLogger().info("OrbitalStrike v3.2 da bat. Owner: " + ownerName());
+        getLogger().info("Config folder: " + getDataFolder().getAbsolutePath());
     }
 
     @Override
@@ -88,6 +106,33 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         cooldowns.clear();
     }
 
+    // ===================== Messages =====================
+    private void loadMessages() {
+        File file = new File(getDataFolder(), "messages.yml");
+        if (!file.exists()) {
+            saveResource("messages.yml", false);
+        }
+        messages = YamlConfiguration.loadConfiguration(file);
+
+        // Merge default nếu thiếu key
+        InputStream defStream = getResource("messages.yml");
+        if (defStream != null) {
+            YamlConfiguration def = YamlConfiguration.loadConfiguration(
+                    new InputStreamReader(defStream, StandardCharsets.UTF_8));
+            messages.setDefaults(def);
+        }
+    }
+
+    private String msg(String path) {
+        String raw = messages.getString(path, path);
+        return ChatColor.translateAlternateColorCodes('&', raw);
+    }
+
+    private String msg(String path, String placeholder, String value) {
+        return msg(path).replace(placeholder, value);
+    }
+
+    // ===================== Owner =====================
     private String ownerName() {
         return getConfig().getString("owner", "NoName334301");
     }
@@ -104,6 +149,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         return sender instanceof Player player && isOwnerPlayer(player);
     }
 
+    // ===================== Item =====================
     private ItemStack createCannon() {
         ItemStack item = new ItemStack(Material.FISHING_ROD);
         ItemMeta meta = item.getItemMeta();
@@ -130,8 +176,8 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         for (ItemStack stack : leftover.values()) {
             target.getWorld().dropItemNaturally(target.getLocation(), stack);
         }
-        sender.sendMessage("§a§lĐã đưa §eFishing Rod (Orbital Strike Cannon) §acho §f" + target.getName());
-        target.sendMessage("§a§lBạn nhận được §eOrbital Strike Cannon§a! Chuột phải để gọi đòn.");
+        sender.sendMessage(msg("give-success", "%player%", target.getName()));
+        target.sendMessage(msg("receive-cannon"));
     }
 
     private Player resolveTarget(CommandSender sender, String name) {
@@ -147,12 +193,12 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
     private void handleGive(CommandSender sender, String targetName) {
         if (!isOwner(sender)) {
-            sender.sendMessage("§cChỉ owner mới dùng được lệnh này!");
+            sender.sendMessage(msg("only-owner"));
             return;
         }
         Player target = resolveTarget(sender, targetName);
         if (target == null) {
-            sender.sendMessage("§cKhông tìm thấy người chơi: §f" + targetName);
+            sender.sendMessage(msg("player-not-found", "%player%", targetName));
             return;
         }
         giveTo(sender, target);
@@ -192,12 +238,13 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!isOwner(sender)) {
-            sender.sendMessage("§cChỉ owner mới dùng được lệnh này!");
+            sender.sendMessage(msg("only-owner"));
             return true;
         }
         if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
             reloadConfig();
-            sender.sendMessage("§a§lĐã tải lại config thành công!");
+            loadMessages();
+            sender.sendMessage(msg("reload-success"));
             return true;
         }
         String self = sender instanceof Player player ? player.getName() : null;
@@ -208,7 +255,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
             name = args.length > 0 ? args[0] : self;
         }
         if (name == null) {
-            sender.sendMessage("§eDùng: §f/orbital give <người chơi> §7| §f/orbital reload");
+            sender.sendMessage(msg("usage"));
             return true;
         }
         handleGive(sender, name);
@@ -239,16 +286,16 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
 
         ItemStack item = event.getItem();
-        if (!isCannon(item)) return; // cần câu thường → bỏ qua hoàn toàn
+        if (!isCannon(item)) return;
 
         EquipmentSlot hand = event.getHand();
         if (hand == null) return;
 
-        event.setCancelled(true); // không thả phao câu
+        event.setCancelled(true);
 
         Player player = event.getPlayer();
         if (!isOwnerPlayer(player)) {
-            player.sendMessage("§cBạn không phải owner, không thể dùng vũ khí này!");
+            player.sendMessage(msg("not-owner-weapon"));
             return;
         }
 
@@ -260,7 +307,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         Long last = cooldowns.get(uuid);
         if (last != null && now - last < cooldownMs) {
             long remain = (cooldownMs - (now - last)) / 1000 + 1;
-            player.sendMessage("§eĐang hồi chiêu: §f" + remain + "s");
+            player.sendMessage(msg("cooldown", "%seconds%", String.valueOf(remain)));
             return;
         }
 
@@ -268,7 +315,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         if ("LOOK".equalsIgnoreCase(getConfig().getString("mode", "SELF"))) {
             Block block = player.getTargetBlockExact(getConfig().getInt("look-range", 300));
             if (block == null) {
-                player.sendMessage("§cKhông có mục tiêu trong tầm ngắm!");
+                player.sendMessage(msg("no-target"));
                 return;
             }
             target = block.getLocation().add(0.5, 1.0, 0.5);
@@ -287,7 +334,7 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
         World world = loc.getWorld();
         if (world == null) return;
         try {
-            world.playSound(loc, Sound.ITEM_GOAT_HORN_SOUND_5, 5.0f, 1.0f); // Call
+            world.playSound(loc, Sound.ITEM_GOAT_HORN_SOUND_5, 5.0f, 1.0f);
         } catch (Exception e) {
             world.playSound(loc, "item.goat_horn.sound.5", 5.0f, 1.0f);
         }
@@ -442,12 +489,13 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
                 );
 
                 TNTPrimed tnt = world.spawn(spawnLoc, TNTPrimed.class, entity -> {
-                    entity.setFuseTicks(9999);
+                    entity.setFuseTicks(99999);
                     entity.setYield(power);
                     entity.setSource(owner);
                     entity.setGravity(false);
                     entity.setVelocity(down.clone());
                     entity.setSilent(true);
+                    entity.setInvulnerable(true);
                     entity.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
                 });
 
@@ -465,41 +513,69 @@ public final class OrbitalStrike extends JavaPlugin implements Listener, Command
 
                 for (TNTPrimed bomb : bombs) {
                     if (bomb.isValid()) {
-                        bomb.setVelocity(down.clone());
                         bomb.setGravity(false);
+                        bomb.setVelocity(down.clone());
                     }
                 }
 
-                if (tick >= fallTicks) {
-                    int index = 0;
-                    for (TNTPrimed bomb : bombs) {
-                        if (bomb.isValid()) {
-                            int fuse = (spread > 0) ? (index % (spread + 1)) : 0;
-                            bomb.setFuseTicks(Math.max(0, fuse));
-                            bomb.setVelocity(down.clone());
-                            bomb.setGravity(false);
-                        }
+                if (tick < fallTicks) return;
+
+                // Xóa entity rồi createExplosion → tuyệt đối không nảy
+                int index = 0;
+                for (TNTPrimed bomb : bombs) {
+                    if (!bomb.isValid()) {
                         index++;
+                        continue;
                     }
-                    activeBombs.removeAll(bombs);
-                    busy.remove(owner.getUniqueId());
 
-                    if (fx) {
-                        world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 10.0f, 0.4f);
-                        world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 8.0f, 0.6f);
+                    Location boomLoc = bomb.getLocation().clone();
+                    if (boomLoc.getY() < target.getY() + 1.5) {
+                        boomLoc.setY(target.getY() + 1.2);
                     }
-                    cancel();
+
+                    bomb.remove();
+                    activeBombs.remove(bomb);
+
+                    final int delay = (spread > 0) ? (index % (spread + 1)) : 0;
+                    final float p = power;
+                    final Location loc = boomLoc;
+
+                    if (delay <= 0) {
+                        world.createExplosion(loc, p, false, true, owner);
+                    } else {
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                world.createExplosion(loc, p, false, true, owner);
+                            }
+                        }.runTaskLater(OrbitalStrike.this, delay);
+                    }
+                    index++;
                 }
+
+                activeBombs.removeAll(bombs);
+                busy.remove(owner.getUniqueId());
+
+                if (fx) {
+                    world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 12.0f, 0.4f);
+                    world.playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 9.0f, 0.55f);
+                }
+                cancel();
             }
         }.runTaskTimer(this, 1L, 1L);
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGH)
     public void onExplode(EntityExplodeEvent event) {
+        if (getConfig().getBoolean("drop-items", false)) return;
+
         Entity entity = event.getEntity();
-        if (!(entity instanceof TNTPrimed tnt)) return;
-        if (!tnt.getPersistentDataContainer().has(key, PersistentDataType.BYTE)) return;
-        if (!getConfig().getBoolean("drop-items", false)) {
+        if (entity instanceof TNTPrimed tnt
+                && tnt.getPersistentDataContainer().has(key, PersistentDataType.BYTE)) {
+            event.setYield(0f);
+            return;
+        }
+        if (entity instanceof Player p && busy.contains(p.getUniqueId())) {
             event.setYield(0f);
         }
     }
