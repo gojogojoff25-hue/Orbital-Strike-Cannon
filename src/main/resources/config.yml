@@ -6,7 +6,7 @@ owners:
   - NoName334301
 
 # Hoi chieu giua 2 lan ban (giay)
-cooldown-seconds: 10
+cooldown-seconds: 3
 
 # So lan ban truoc khi can cau vo (1 = ban 1 lan la vo)
 rod-uses: 1
@@ -14,11 +14,8 @@ rod-uses: 1
 # Thoi gian "nap" tia sang truoc khi TNT roi (tick, 20 tick = 1 giay)
 charge-ticks: 60
 
-# Do cao TNT bat dau roi (block)
+# Do cao TNT bat dau roi (block). TNT roi binh thuong va no dung luc cham dat
 sky-height: 150
-
-# Toc do roi cua TNT (block moi tick)
-fall-speed: 2.5
 
 # Suc no moi qua TNT (4.0 = TNT mac dinh cua Minecraft)
 tnt-yield: 4.0
