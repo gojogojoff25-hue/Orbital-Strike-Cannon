@@ -1,6 +1,7 @@
 package me.noname.orbital;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -47,7 +48,7 @@ import java.util.regex.Pattern;
 
 /**
  * Orbital Strike Cannon - cần câu thường, ai cầm cũng dùng được, chỉ owner mới lấy được bằng lệnh.
- * Toàn bộ TNT xuất hiện cùng lúc, rơi cùng tốc độ và nổ trong cùng một tick.
+ * TNT rơi bình thường theo vật lý mặc định và nổ đúng lúc chạm đất, tất cả trong cùng một tick.
  */
 public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
@@ -63,6 +64,7 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
     private final Map<UUID, Long> cooldowns = new HashMap<>();
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
     private final Set<TNTPrimed> liveBombs = new HashSet<>();
+    private final List<Chunk> heldChunks = new ArrayList<>();
 
     // ----- cấu hình (đọc từ config.yml) -----
     private final Set<String> owners = new HashSet<>();
@@ -73,9 +75,8 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
     private int skyHeight;
     private int ringSpacing;
     private int maxRadius;
-    private int density;
+    private double tntSpacing;
     private int maxTnt;
-    private double fallSpeed;
     private float tntYield;
     private boolean blockDrops;
     private boolean protectShooter;
@@ -103,6 +104,8 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
             if (t.isValid()) t.remove();
         }
         liveBombs.clear();
+        for (Chunk ch : heldChunks) ch.removePluginChunkTicket(this);
+        heldChunks.clear();
         cooldowns.clear();
         protectedUntil.clear();
     }
@@ -126,9 +129,8 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         skyHeight = clamp(c.getInt("sky-height", 150), 20, 300);
         ringSpacing = clamp(c.getInt("ring-spacing", 5), 2, 20);
         maxRadius = clamp(c.getInt("max-radius", 40), 0, 100);
-        density = clamp(c.getInt("tnt-density", 3), 1, 8);
-        maxTnt = clamp(c.getInt("max-tnt", 1000), 1, 3000);
-        fallSpeed = clampD(c.getDouble("fall-speed", 2.5), 0.5, 5.0);
+        tntSpacing = clampD(c.getDouble("tnt-spacing", 2.0), 1.0, 8.0);
+        maxTnt = clamp(c.getInt("max-tnt", 1500), 1, 4000);
         tntYield = (float) clampD(c.getDouble("tnt-yield", 4.0), 1.0, 60.0);
         blockDrops = c.getBoolean("block-drops", true);
         protectShooter = c.getBoolean("protect-shooter", false);
@@ -398,12 +400,12 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         }.runTaskTimer(this, 0L, 2L);
     }
 
-    private List<double[]> buildOffsets() {
+    // Tạo các vòng tròn hoàn hảo: tâm + các vòng đồng tâm, TNT cách đều nhau theo cung tròn.
+    private List<double[]> generateOffsets(double arc) {
         List<double[]> list = new ArrayList<>();
         list.add(new double[]{0, 0});
         for (int r = ringSpacing; r <= maxRadius; r += ringSpacing) {
-            int count = Math.max(6, r * density);
-            if (list.size() + count > maxTnt) break;
+            int count = Math.max(6, (int) Math.round(2 * Math.PI * r / arc));
             for (int k = 0; k < count; k++) {
                 double ang = 2 * Math.PI * k / count;
                 list.add(new double[]{Math.cos(ang) * r, Math.sin(ang) * r});
@@ -412,75 +414,107 @@ public class OrbitalStrike extends JavaPlugin implements Listener, CommandExecut
         return list;
     }
 
-    // Giai đoạn 2: TẤT CẢ TNT cùng xuất hiện trong 1 tick, rơi cùng tốc độ,
-    // rồi cùng nổ trong 1 tick.
+    // Nếu vượt giới hạn max-tnt thì giãn khoảng cách giữa các TNT (vòng tròn vẫn đầy đủ, không bỏ vòng nào)
+    private List<double[]> buildOffsets() {
+        double arc = tntSpacing;
+        List<double[]> list = generateOffsets(arc);
+        while (list.size() > maxTnt && arc < 100) {
+            arc *= 1.05;
+            list = generateOffsets(arc);
+        }
+        return list;
+    }
+
+    // Số tick TNT cần để rơi tự do (vật lý vanilla) một quãng `drop` block
+    private static int fallTicksFor(double drop) {
+        double speed = 0;
+        double dist = 0;
+        int ticks = 0;
+        while (dist < drop && ticks < 2000) {
+            speed += 0.04;     // trọng lực
+            dist += speed;     // di chuyển
+            speed *= 0.98;     // lực cản
+            ticks++;
+        }
+        return Math.max(1, ticks);
+    }
+
+    // Giai đoạn 2: TNT rơi bình thường (vật lý mặc định), ngòi được tính đúng bằng thời gian rơi
+    // => TNT chạm mặt đất đúng lúc nổ. Tất cả cùng xuất hiện 1 tick, cùng độ cao, cùng ngòi => nổ đồng loạt.
     private void launch(Player owner, Location target) {
         final World w = target.getWorld();
         if (w == null) return;
-        w.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 10f, 0.6f);
 
         double maxDrop = w.getMaxHeight() - target.getY() - 2;
         double drop = Math.max(10.0, Math.min((double) skyHeight, maxDrop));
-        final int fallTicks = (int) Math.ceil(drop / fallSpeed);
-        final Vector down = new Vector(0, -fallSpeed, 0);
+        final int fuse = fallTicksFor(drop);
         final Player src = owner.isOnline() ? owner : null;
         final List<TNTPrimed> bombs = new ArrayList<>();
+        final List<double[]> offsets = buildOffsets();
 
         if (protectShooter && src != null) {
-            protectedUntil.put(src.getUniqueId(), System.currentTimeMillis() + (fallTicks + 80L) * 50L);
+            protectedUntil.put(src.getUniqueId(), System.currentTimeMillis() + (fuse + 80L) * 50L);
         }
 
-        for (double[] o : buildOffsets()) {
+        // Giữ các chunk của cả vòng tròn luôn được load và hoạt động => không TNT nào bị đứng yên / mất
+        final List<Chunk> held = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        for (double[] o : offsets) {
+            int cx = ((int) Math.floor(target.getX() + o[0])) >> 4;
+            int cz = ((int) Math.floor(target.getZ() + o[1])) >> 4;
+            long key = ((long) cx << 32) ^ (cz & 0xffffffffL);
+            if (seen.add(key)) {
+                Chunk ch = w.getChunkAt(cx, cz);
+                ch.addPluginChunkTicket(this);
+                held.add(ch);
+            }
+        }
+        heldChunks.addAll(held);
+
+        int failed = 0;
+        for (double[] o : offsets) {
             Location spawn = new Location(w, target.getX() + o[0], target.getY() + drop, target.getZ() + o[1]);
-            TNTPrimed tnt = w.spawn(spawn, TNTPrimed.class, b -> {
-                b.setFuseTicks(4000);          // ngòi rất dài: không nổ trong lúc rơi
-                b.setYield(tntYield);
-                b.setIsIncendiary(false);
-                b.setGravity(false);
-                b.setVelocity(down);
-                if (src != null) b.setSource(src);
-                b.getPersistentDataContainer().set(tntKey, PersistentDataType.BYTE, (byte) 1);
-            });
+            TNTPrimed tnt = spawnBomb(w, spawn, fuse, src);
+            if (tnt == null) tnt = spawnBomb(w, spawn, fuse, src); // thử lại 1 lần
+            if (tnt == null) {
+                failed++;
+                continue;
+            }
             bombs.add(tnt);
             liveBombs.add(tnt);
         }
+        if (failed > 0) {
+            getLogger().warning("Khong the tao " + failed + "/" + offsets.size() + " TNT (bi plugin khac chan?)");
+        }
 
-        new BukkitRunnable() {
-            int t = 0;
-
-            @Override
-            public void run() {
-                t++;
-                if (t >= fallTicks) {
-                    detonate(bombs, target);
-                    cancel();
-                    return;
-                }
-                for (TNTPrimed b : bombs) {
-                    if (b.isValid()) b.setVelocity(down);
-                }
+        // Dọn sau khi TNT đã nổ: nhả chunk + xóa khỏi danh sách theo dõi
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            liveBombs.removeAll(bombs);
+            for (Chunk ch : held) {
+                ch.removePluginChunkTicket(this);
+                heldChunks.remove(ch);
             }
-        }.runTaskTimer(this, 1L, 1L);
+        }, fuse + 20L);
     }
 
-    // Đặt ngòi = 1 cho tất cả cùng lúc => nổ đồng loạt trong cùng một tick
-    private void detonate(List<TNTPrimed> bombs, Location target) {
-        for (TNTPrimed b : bombs) {
-            if (b.isValid()) {
+    private TNTPrimed spawnBomb(World w, Location spawn, int fuse, Player src) {
+        try {
+            TNTPrimed tnt = w.spawn(spawn, TNTPrimed.class, b -> {
+                b.setFuseTicks(fuse);          // nổ đúng lúc chạm đất
+                b.setYield(tntYield);
+                b.setIsIncendiary(false);
                 b.setVelocity(new Vector(0, 0, 0));
-                b.setFuseTicks(1);
-            }
-        }
-        liveBombs.removeAll(bombs);
-        World w = target.getWorld();
-        if (w != null) {
-            w.strikeLightningEffect(target);
-            w.playSound(target, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 10f, 0.5f);
+                if (src != null) b.setSource(src);
+                b.getPersistentDataContainer().set(tntKey, PersistentDataType.BYTE, (byte) 1);
+            });
+            return tnt.isValid() ? tnt : null;
+        } catch (IllegalArgumentException ex) {
+            return null;
         }
     }
 
     // =====================================================================
-    //  Bảo vệ owner + tắt drop block
+    //  Bảo vệ người bắn (tùy chọn) + tắt drop block
     // =====================================================================
     @EventHandler(ignoreCancelled = true)
     public void onExplosionDamage(EntityDamageEvent e) {
