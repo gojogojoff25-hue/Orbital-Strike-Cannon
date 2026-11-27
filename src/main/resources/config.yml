@@ -1,35 +1,43 @@
-# ===== OrbitalStrike v3.0 VIP Pro Max =====
-# Sửa xong gõ /orbital reload (hoặc restart server) để áp dụng.
+# ============ ORBITAL STRIKE CANNON - CAU HINH ============
+# Sua xong go /orbital reload (hoac restart server)
 
-# Chỉ người chơi tên này (và console) mới dùng được cannon.
-owner: NoName334301
-# (Tùy chọn) khóa thêm theo UUID để chống giả mạo tên khi server cracked. Để trống nếu không dùng.
-owner-uuid: "1d8f4138-65f1-3e7c-bde2-370c07825bfe"
+# Danh sach owner duoc LAY cannon bang lenh (ai cam cannon cung dung duoc)
+owners:
+  - NoName334301
 
+# Hoi chieu giua 2 lan ban (giay)
 cooldown-seconds: 10
 
-# SELF = chỗ đứng | LOOK = chỗ đang nhìn
-mode: SELF
-look-range: 300
+# So lan ban truoc khi can cau vo (1 = ban 1 lan la vo)
+rod-uses: 1
 
-rod-durability-left: 1
+# Thoi gian "nap" tia sang truoc khi TNT roi (tick, 20 tick = 1 giay)
+charge-ticks: 60
 
-charge-seconds: 3
+# Do cao TNT bat dau roi (block)
+sky-height: 150
 
-height: 150
-fall-speed: 3.0
+# Toc do roi cua TNT (block moi tick)
+fall-speed: 2.5
 
-rings: [0, 6, 12, 18, 24, 30, 36]
-tnt-per-radius: 2
-max-tnt: 800
-tnt-power: 12.0
+# Suc no moi qua TNT (4.0 = TNT mac dinh cua Minecraft)
+tnt-yield: 4.0
 
-detonation-spread-ticks: 0
+# Khoang cach giua cac vong TNT va ban kinh toi da (block)
+ring-spacing: 5
+max-radius: 40
 
-drop-items: false
-owner-immune: true
-effects: true
+# Mat do TNT tren moi vong (so TNT = ban kinh x mat do)
+tnt-density: 3
 
-give-resistance: true
-resistance-duration-ticks: 200
-resistance-amplifier: 4
+# Gioi han tong so TNT moi lan ban (de server khong bi qua tai)
+max-tnt: 1000
+
+# true = mac dinh Minecraft (block bi pha roi item). false = khong roi item (do lag hon)
+block-drops: true
+
+# true = nguoi ban khong bi sat thuong no trong luc ban. false = mac dinh (bi sat thuong)
+protect-shooter: false
+
+# Cac the gioi KHONG duoc dung cannon (vi du: [world_nether])
+disabled-worlds: []
